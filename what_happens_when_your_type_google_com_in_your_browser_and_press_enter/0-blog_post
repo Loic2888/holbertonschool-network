@@ -1,0 +1,211 @@
+# What Happens When You Type https://www.google.com and Press Enter?
+
+*A deep dive into the full web stack journey — from your keyboard to Google's servers and back.*
+
+---
+
+## Introduction
+
+"What happens when you type `https://www.google.com` in your browser and press Enter?"
+
+This is one of the most iconic interview questions in software engineering. It seems deceptively simple, but a complete answer touches nearly every layer of the web stack: networking, security, infrastructure, and application architecture. Let's walk through the entire journey, step by step.
+
+---
+
+## Step 1 — DNS Request: Translating a Name into an Address
+
+Before your browser can contact Google, it needs to know *where* Google is on the internet — that means getting an IP address.
+
+**DNS (Domain Name System)** is the internet's phone book. When you type `www.google.com`, here is what happens:
+
+1. **Browser cache check**: Your browser first looks in its own DNS cache to see if it already knows the IP for `www.google.com`.
+2. **OS cache check**: If not found, the operating system checks its own resolver cache.
+3. **Recursive resolver query**: If still not found, the OS asks a **recursive DNS resolver** (usually provided by your ISP or a public DNS like `8.8.8.8`).
+4. **Root nameserver → TLD nameserver → Authoritative nameserver**: The resolver performs a chain of queries:
+   - It asks a **Root nameserver** who handles `.com`.
+   - It asks the `.com` **TLD nameserver** who handles `google.com`.
+   - It asks **Google's authoritative nameserver** for the exact IP of `www.google.com`.
+5. The resolver returns the IP address (e.g., `142.250.74.68`) to your browser.
+
+This entire process typically takes milliseconds. The result is cached at multiple levels (with a TTL — Time To Live) to speed up future lookups.
+
+---
+
+## Step 2 — TCP/IP: Establishing the Connection
+
+Now that the browser has Google's IP address, it needs to establish a reliable communication channel. This is done using **TCP/IP (Transmission Control Protocol / Internet Protocol)**.
+
+**IP** handles routing: data is broken into packets, each labeled with source and destination addresses, and routed across the internet through a series of routers.
+
+**TCP** handles reliability: it ensures all packets arrive, in the right order, without corruption. It does this through a **3-way handshake**:
+
+```
+Client  →  SYN        →  Server
+Client  ←  SYN-ACK    ←  Server
+Client  →  ACK        →  Server
+```
+
+1. Your browser sends a **SYN** (synchronize) packet to Google's server.
+2. Google's server replies with **SYN-ACK** (synchronize-acknowledge).
+3. Your browser sends an **ACK** (acknowledge), and the connection is established.
+
+The connection is now open on **port 443** (the default port for HTTPS). Data can flow both ways.
+
+---
+
+## Step 3 — Firewall: The First Line of Defense
+
+Before packets reach Google's servers (and even before leaving your machine), they pass through **firewalls**.
+
+A firewall is a security system — hardware or software — that inspects network traffic and applies rules to allow or block it.
+
+In this journey, firewalls operate at multiple levels:
+
+- **Your local machine/router**: Your OS or home router may have a firewall that filters outgoing connections.
+- **Your ISP**: Internet providers often run firewalls to filter malicious traffic.
+- **Google's network perimeter**: Google uses enterprise-grade firewalls and network access control to protect their infrastructure. Traffic is inspected, filtered, and only allowed through to the appropriate services.
+
+Firewalls operate on rules such as: *"allow TCP traffic on port 443 from any IP to this server"* or *"block all traffic from known malicious IP ranges"*.
+
+---
+
+## Step 4 — HTTPS/SSL: Encrypting the Communication
+
+Since the URL starts with `https://`, the connection must be **encrypted and authenticated** using **TLS (Transport Layer Security)** — commonly referred to by its predecessor name, SSL.
+
+After the TCP handshake, a **TLS handshake** takes place:
+
+1. **ClientHello**: Your browser tells the server which TLS version and cipher suites it supports.
+2. **ServerHello + Certificate**: Google's server responds with its choice of cipher suite and sends its **SSL/TLS certificate**, signed by a trusted Certificate Authority (CA).
+3. **Certificate verification**: Your browser verifies the certificate:
+   - Is it signed by a trusted CA?
+   - Is it valid (not expired)?
+   - Does the domain match (`www.google.com`)?
+4. **Key exchange**: Both sides agree on a **session key** using asymmetric cryptography (e.g., ECDHE). All subsequent communication is encrypted with this symmetric key.
+5. **Finished**: Encrypted communication begins.
+
+From this point on, everything — including your search query — is **encrypted in transit**. No third party can read it (this is called **confidentiality**). The certificate also guarantees you're really talking to Google, not an impersonator (this is called **authentication**).
+
+---
+
+## Step 5 — Load Balancer: Distributing the Traffic
+
+Google receives billions of requests per day. A single server cannot handle that. This is where the **load balancer** comes in.
+
+A load balancer is a system (hardware or software) that sits in front of a pool of servers and distributes incoming requests across them according to an algorithm:
+
+- **Round Robin**: Requests are distributed in turn to each server.
+- **Least Connections**: The request is sent to the server with the fewest active connections.
+- **IP Hash**: The client's IP determines which server handles the request (useful for session persistence).
+
+Load balancers also perform **health checks** — if a server goes down, the load balancer automatically stops sending traffic to it.
+
+Google uses multiple tiers of load balancing at a global scale, including Anycast routing (a single IP address routes you to the nearest data center geographically) and internal software load balancers.
+
+---
+
+## Step 6 — Web Server: Serving Static Content
+
+Once the load balancer forwards your request to a machine, a **web server** handles it.
+
+The web server (e.g., **Nginx**, **Apache**, **Google's own internal servers**) is responsible for:
+
+- Receiving the HTTP/HTTPS request.
+- Serving **static files** directly (HTML, CSS, JavaScript, images).
+- Passing requests it cannot handle itself to the **application server** (see next step).
+
+For `https://www.google.com`, the web server receives a `GET /` HTTP request and decides what to serve. For the Google homepage, it may serve the static HTML shell immediately and delegate the dynamic search logic to an application server.
+
+---
+
+## Step 7 — Application Server: Processing Business Logic
+
+The **application server** is where the actual business logic runs. Unlike the web server, it handles **dynamic content** — content that is generated on the fly based on the request.
+
+For Google Search, the application server might:
+
+- Parse the query parameters.
+- Apply personalization (are you logged in? what language? what region?).
+- Trigger the actual search algorithm.
+- Rank and filter results.
+- Format the response.
+
+Application servers are built in various languages and frameworks (Python, Java, Go, Node.js, etc.). They are stateless in modern architectures — meaning they don't store session data locally. Sessions are managed via tokens (like JWTs) or external session stores.
+
+---
+
+## Step 8 — Database: Retrieving and Storing Data
+
+At some point in the backend pipeline, data must be **read from or written to a database**.
+
+For Google, this is vastly more complex than a single database — their infrastructure includes:
+
+- **Distributed databases** (like Bigtable, Spanner) storing petabytes of indexed web data.
+- **Caching layers** (like Memcached or Redis) to serve frequently accessed data at extremely low latency without hitting the database directly.
+- **Search indexes** built and maintained continuously by Google's crawlers.
+
+In a standard web application, a database query might look like:
+```sql
+SELECT * FROM search_results WHERE query = 'openai' ORDER BY relevance DESC LIMIT 10;
+```
+
+The result is returned to the application server, which assembles it into a response.
+
+---
+
+## The Response Journey Back
+
+Once the data is assembled, the response travels back through the stack:
+
+1. Application server returns data to the web server.
+2. Web server packages it as an **HTTP response** (`200 OK` + HTML body).
+3. The response travels over the encrypted TLS connection, through the internet, back to your machine.
+4. Your browser receives the response, **renders the HTML**, fetches referenced CSS/JS/images (triggering additional DNS + TCP + HTTPS cycles for each), and paints the page on your screen.
+5. JavaScript executes, making the page interactive.
+
+---
+
+## Summary: The Full Journey at a Glance
+
+```
+[You press Enter]
+       |
+       v
+[1. DNS Resolution]         → www.google.com → 142.250.74.68
+       |
+       v
+[2. TCP/IP Handshake]       → Port 443, 3-way handshake
+       |
+       v
+[3. Firewall Checks]        → Traffic filtered and validated
+       |
+       v
+[4. TLS Handshake]          → Encrypted channel established
+       |
+       v
+[5. Load Balancer]          → Request routed to available server
+       |
+       v
+[6. Web Server]             → HTTP request received, static content or proxy
+       |
+       v
+[7. Application Server]     → Business logic executed, query processed
+       |
+       v
+[8. Database]               → Data retrieved from storage or cache
+       |
+       v
+[Response travels back]     → HTML rendered in browser
+```
+
+---
+
+## Conclusion
+
+What seems like an instant and trivial action — typing a URL and pressing Enter — is actually the result of an intricate, highly optimized chain of systems working in perfect coordination. Understanding this flow is foundational for any software engineer, whether you work on the front end, the back end, or infrastructure.
+
+Mastering this question isn't just about acing interviews. It's about understanding the web as a system — and that understanding makes you a better engineer at every layer.
+
+---
+
+*Written by Loïc — Holberton School, Toulouse | System Architecture & Fullstack Development*
